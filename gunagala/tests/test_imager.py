@@ -1,8 +1,10 @@
 # Tests for the signal-to-noise module
 import pytest
+from pytest import approx
 import numpy as np
 import astropy.units as u
 import astropy.constants as c
+from astropy.coordinates import SkyCoord
 
 from gunagala.optic import Optic
 from gunagala.optical_filter import Filter
@@ -73,6 +75,12 @@ def psf():
 
 @pytest.fixture(scope='module')
 def imager(lens, ccd, filters, psf, sky):
+    imager = Imager(optic=lens, camera=ccd, filters=filters, psf=psf, sky=sky, num_imagers=5, num_per_computer=5)
+    return imager
+
+
+@pytest.fixture(scope='function')
+def imager_function_scope(lens, ccd, filters, psf, sky):
     imager = Imager(optic=lens, camera=ccd, filters=filters, psf=psf, sky=sky, num_imagers=5, num_per_computer=5)
     return imager
 
@@ -329,11 +337,11 @@ def test_extended_rates(imager, filter_name):
                                                saturation_check=True)
 
     # Calculating surface brightness given exposure time and SNR should match original surface brightness
-    assert imager.rate_to_SB(rate, filter_name) == imager.extended_source_limit(total_exp_time=t_exp,
+    assert approx(imager.rate_to_SB(rate, filter_name).value) == imager.extended_source_limit(total_exp_time=t_exp,
                                                                                 filter_name=filter_name,
                                                                                 snr_target=snr,
                                                                                 sub_exp_time=t_sub,
-                                                                                calc_type='per arcsecond squared')
+                                                                                calc_type='per arcsecond squared').value
 
     # Can't use pixel binning with per arcsecond squared signal, noise values
     with pytest.raises(ValueError):
@@ -733,6 +741,22 @@ def test_snr_vs_mag(imager, filter_name, tmpdir):
                                        snr_target=10.0)
     # Roughly background limited at faint end, 10 times higher SNR should be about 2.5 mag brighter
     assert mags3[-1].value == pytest.approx(mags[-1].value - 2.5, abs=0.1)
+
+
+def test_get_pixel_coords_no_WCS_call_first(imager_function_scope):
+    # test if get_pixel_coords is called without first running set_WCS_centre
+    with pytest.raises(ValueError):
+        imager_function_scope.get_pixel_coords()
+
+
+def test_get_pixel_coords_with_WCS_call_first(imager_function_scope):
+    test_coord_string = "189.9976325 -11.6230544"
+
+    # now set WCS centre first, then try and get_pixel_coords
+    imager_function_scope.set_WCS_centre(test_coord_string, unit='deg')
+    centre_field_pixels = imager_function_scope.get_pixel_coords()
+    assert imager_function_scope.wcs.pixel_shape[0] == centre_field_pixels.shape[1]
+    assert imager_function_scope.wcs.pixel_shape[1] == centre_field_pixels.shape[0]
 
 
 def test_create_imagers():
